@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Human–AI Interaction Study</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1d2330;--mu:#667085;--ac:#2f5bea;--bd:#dfe3ea;--ai:#eef2ff}
+@media (prefers-color-scheme:dark){:root{--bg:#14171f;--card:#1d2230;--tx:#e8ebf2;--mu:#9aa3b5;--ac:#7b9bff;--bd:#323a4d;--ai:#262d45}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+#app{max-width:760px;margin:32px auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:24px;margin-bottom:16px}
+h1,h2{margin:0 0 12px}.mu{color:var(--mu);font-size:14px}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:10px 20px;font-size:15px;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+label.opt{display:block;padding:9px 12px;border:1px solid var(--bd);border-radius:8px;margin:6px 0;cursor:pointer}
+textarea{width:100%;min-height:80px;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+.ai{background:var(--ai);border-radius:12px;padding:14px 16px;margin:14px 0}
+.lock{border:2px dashed var(--bd);border-radius:12px;padding:16px;margin:14px 0;text-align:center}
+.lk{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 14px}.lk label{border:1px solid var(--bd);border-radius:8px;padding:6px 14px;cursor:pointer}
+.lk .e{font-size:12px;color:var(--mu);width:100%;display:flex;justify-content:space-between}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ============ CONFIGURATION ============ */
+const SB_URL = 'https://fxdbuerkfjgjntnhvmot.supabase.co';
+const SB_KEY = 'sb_publishable_zNMv5_gXYEQtvMDTepu6nw_IZaJy4nU';
+const LOCK_SECONDS = 5;
+const CONTACT = '[ADD: researcher name, institution and contact email]';
+
+/* ============ SAMPLE QUESTIONS (replace with the real ones) ============ */
+const QS = [
+ {id:'q1', text:'What is the capital city of Australia?', opts:['Sydney','Canberra','Melbourne','Perth'], correct:'Canberra', ai:'Sydney', aiWhy:'Sydney is Australia’s largest city and its economic centre, and the federal government is based there, which makes it the capital.'},
+ {id:'q2', text:'What is 17 × 24?', opts:['398','408','418','428'], correct:'408', ai:'408', aiWhy:'17 × 24 = 17 × 20 + 17 × 4 = 340 + 68 = 408.'},
+ {id:'q3', text:'What is the chemical symbol for gold?', opts:['Ag','Au','Gd','Go'], correct:'Au', ai:'Ag', aiWhy:'The symbol Ag comes from "aurum", the Latin word for gold, so Ag is the correct symbol.'},
+ {id:'q4', text:'How many continents is the Earth commonly divided into?', opts:['5','6','7','8'], correct:'7', ai:'7', aiWhy:'The common model lists Asia, Africa, Europe, North America, South America, Oceania and Antarctica.'}
+];
+const PRE = ['I usually trust the answers that AI gives me.','I feel comfortable using AI to help me with tasks.','I usually double-check information provided by AI.'];
+const POST = ['The interface helped me think more carefully before trusting the AI.','The interface was frustrating to use.','I felt in control of the answers I gave.'];
+
+/* ============ DATA SAVING (queue + automatic retry) ============ */
+const hdr = {'apikey':SB_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+let Q = JSON.parse(localStorage.getItem('xq')||'[]'), flushing=false;
+const save = ()=>localStorage.setItem('xq',JSON.stringify(Q));
+function enq(table,row){Q.push({table,row});save();}
+async function flush(){
+  if(flushing||!Q.length) return; flushing=true;
+  for(const it of Q.slice()){
+    try{
+      const r=await fetch(SB_URL+'/rest/v1/'+it.table,{method:'POST',headers:hdr,body:JSON.stringify(it.row)});
+      if(r.ok||r.status===409){Q=Q.filter(x=>x!==it);save();}
+      else console.warn('Save error',it.table,r.status,await r.text());
+    }catch(e){console.warn('Network error',e);break;}
+  }
+  flushing=false;
+}
+setInterval(flush,3000);
+
+/* ============ STATE & LOGGING ============ */
+const now=()=>Math.round(performance.now());
+let PID=localStorage.getItem('xpid'), COND=null, cur=null;
+const app=document.getElementById('app');
+function ev(type,meta){ if(PID) enq('events',{eid:PID+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,8),pid:PID,q_index:cur,type,t_ms:now(),t_abs:Date.now(),meta:meta||null}); }
+document.addEventListener('visibilitychange',()=>ev(document.hidden?'tab_hidden':'tab_visible'));
+window.addEventListener('blur',()=>ev('window_blur'));
+window.addEventListener('focus',()=>ev('window_focus'));
+window.addEventListener('beforeunload',()=>{flush();});
+
+const isMobile=()=>/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&innerWidth<1000)||innerWidth<768;
+const likert=(name,lo,hi)=>`<div class="lk"><div class="e"><span>${lo}</span><span>${hi}</span></div>${[1,2,3,4,5,6,7].map(n=>`<label><input type="radio" name="${name}" value="${n}"> ${n}</label>`).join('')}</div>`;
+const val=n=>{const e=document.querySelector(`input[name="${n}"]:checked`);return e?e.value:null;};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ============ SCREENS ============ */
+function start(){
+  if(isMobile()){app.innerHTML='<div class="card"><h1>Please use a computer</h1><p>This study can only be completed on a laptop or desktop computer. If you are already on a computer, please maximise your browser window and reload this page.</p></div>';return;}
+  app.innerHTML=`<div class="card"><h1>Study on Human–AI Interaction</h1>
+  <p>You are invited to take part in an academic research study (about 10–15 minutes). You will answer a short survey and several questions, with help from an AI assistant.</p>
+  <p class="mu">Your responses are anonymous and used for research purposes only. Participation is voluntary and you may stop at any time by closing this page. During the task, the system records your response times and whether you leave this page. Please do not use other AI tools or search the web while answering.</p>
+  <p class="mu">Contact: ${esc(CONTACT)}</p>
+  <label><input type="checkbox" id="ok"> I have read the information above and agree to participate.</label><br><br><button id="go" disabled>Start</button></div>`;
+  ok.onchange=()=>go.disabled=!ok.checked;
+  go.onclick=begin;
+}
+async function begin(){
+  go.disabled=true;
+  if(!PID){PID=new URLSearchParams(location.search).get('pid')||('P'+Math.random().toString(36).slice(2,10));localStorage.setItem('xpid',PID);}
+  COND=parseInt(localStorage.getItem('xcond')||'0');
+  if(!COND){
+    try{
+      const r=await fetch(SB_URL+'/rest/v1/rpc/assign_condition',{method:'POST',headers:{'apikey':SB_KEY,'Content-Type':'application/json'},
+        body:JSON.stringify({p_pid:PID,p_device:{ua:navigator.userAgent,w:innerWidth,h:innerHeight,touch:navigator.maxTouchPoints}})});
+      COND=await r.json(); if(![1,2,3].includes(COND)) throw 0;
+      localStorage.setItem('xcond',COND);
+    }catch(e){app.innerHTML='<div class="card"><h2>Could not connect to the server</h2><p>Please check your internet connection and reload the page.</p></div>';return;}
+  }
+  ev('start',{cond:COND});
+  survey('pre',PRE,'Strongly disagree','Strongly agree',()=>instr());
+}
+function survey(kind,items,lo,hi,next){
+  app.innerHTML=`<div class="card"><h2>${kind==='pre'?'Short survey before you begin':'Short survey after the task'}</h2>
+  ${items.map((t,i)=>`<p>${esc(t)}</p>${likert('s'+i,lo,hi)}`).join('')}
+  ${kind==='post'?`<p>Which description best matches how the AI answers were shown to you?</p>${['The AI answer appeared immediately','I had to wait a few seconds before seeing the AI answer','I had to choose my own answer and give a reason before seeing the AI answer','I do not remember'].map(o=>`<label class="opt"><input type="radio" name="mc" value="${esc(o)}"> ${esc(o)}</label>`).join('')}`:''}
+  <button id="nx">Continue</button></div>`;
+  nx.onclick=()=>{
+    const d={};for(let i=0;i<items.length;i++){d['item'+(i+1)]=val('s'+i);if(!d['item'+(i+1)])return alert('Please answer all questions.');}
+    if(kind==='post'){d.manip_check=val('mc');if(!d.manip_check)return alert('Please answer all questions.');}
+    enq('surveys',{pid:PID,kind,data:d});flush();next();};
+}
+function instr(){
+  app.innerHTML=`<div class="card"><h2>Instructions</h2><p>You will answer ${QS.length} questions. An AI assistant will be available to help with each one. After each question, you will rate how confident you are and how mentally demanding it was.</p><button id="nx">Start the task</button></div>`;
+  nx.onclick=()=>showQ(0);
+}
+function showQ(i){
+  if(i>=QS.length){cur=null;return survey('post',POST,'Strongly disagree','Strongly agree',done);}
+  cur=i;const q=QS[i];const rec={t_shown:now(),t_ai_open:null,initial_choice:null,initial_reason:null};
+  const opts=n=>q.opts.map(o=>`<label class="opt"><input type="radio" name="${n}" value="${esc(o)}"> ${esc(o)}</label>`).join('');
+  app.innerHTML=`<div class="card"><div class="mu">Question ${i+1} of ${QS.length}</div><h2>${esc(q.text)}</h2>
+   <div id="s1" ${COND===3?'':'hidden'}><p><b>First, choose your own answer and explain your reasoning:</b></p>${opts('ini')}
+     <textarea id="why" placeholder="Your reasoning (at least 10 characters)"></textarea><br><br><button id="lockbtn">Confirm and see the AI’s answer</button></div>
+   <div id="aiarea"></div>
+   <div id="fin" hidden><hr><p><b>Your final answer:</b></p>${opts('fin')}
+     <p>How confident are you in this answer?</p>${likert('conf','Not at all confident','Extremely confident')}
+     <p>How mentally demanding was this question?</p>${likert('eff','Not at all demanding','Extremely demanding')}
+     <button id="sub">${i+1<QS.length?'Next question':'Finish'}</button></div></div>`;
+  ev('q_shown');
+  const reveal=()=>{rec.t_ai_open=now();ev('ai_open');
+    document.getElementById('aiarea').innerHTML=`<div class="ai"><div class="mu">AI assistant</div><p><b>Answer: ${esc(q.ai)}</b></p><p>${esc(q.aiWhy)}</p></div>`;
+    document.getElementById('fin').hidden=false;};
+  if(COND===1) reveal();
+  if(COND===2){
+    let n=LOCK_SECONDS;const a=document.getElementById('aiarea');
+    a.innerHTML=`<div class="lock"><p><b>Please take a few seconds to think about the question yourself before viewing the AI’s answer.</b></p><p class="mu">The AI can make mistakes. The answer unlocks in <span id="cd">${n}</span> seconds.</p><button id="openai" disabled>Show the AI’s answer</button></div>`;
+    const tm=setInterval(()=>{n--;document.getElementById('cd').textContent=Math.max(n,0);if(n<=0){clearInterval(tm);ev('ai_unlock');document.getElementById('openai').disabled=false;}},1000);
+    document.getElementById('openai').onclick=reveal;
+  }
+  if(COND===3){
+    document.getElementById('lockbtn').onclick=()=>{rec.initial_choice=val('ini');rec.initial_reason=document.getElementById('why').value.trim();
+      if(!rec.initial_choice||rec.initial_reason.length<10)return alert('Please choose an answer and write your reasoning (at least 10 characters).');
+      ev('initial_submit');document.getElementById('s1').querySelectorAll('input,textarea,button').forEach(e=>e.disabled=true);reveal();};
+  }
+  document.getElementById('sub').onclick=()=>{const f=val('fin'),c=val('conf'),e=val('eff');
+    if(!f||!c||!e)return alert('Please choose your final answer and complete both rating scales.');
+    ev('final_submit');
+    enq('responses',{pid:PID,q_index:i,q_id:q.id,condition:COND,initial_choice:rec.initial_choice,initial_reason:rec.initial_reason,final_choice:f,
+      correct_answer:q.correct,is_correct:f===q.correct,ai_answer:q.ai,ai_correct:q.ai===q.correct,followed_ai:f===q.ai,confidence:+c,effort:+e,t_shown:rec.t_shown,t_ai_open:rec.t_ai_open,t_submit:now()});
+    flush();showQ(i+1);};
+}
+function done(){
+  ev('finish');flush();
+  app.innerHTML=`<div class="card"><h1>Thank you!</h1><p><b>Debriefing:</b> In this study, some of the AI assistant’s answers were deliberately written to be incorrect, so that we could study how people react to wrong information that sounds convincing. This was not a system error and does not reflect your ability.</p><p class="mu">Your data has been recorded anonymously. You may now close this page.</p><p class="mu" id="st"></p></div>`;
+  const chk=setInterval(()=>{if(!Q.length){document.getElementById('st').textContent='All data saved.';clearInterval(chk);}else flush();},1500);
+}
+start();
+</script>
+</body>
+</html>
